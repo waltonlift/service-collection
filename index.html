@@ -317,14 +317,14 @@
   .arow.has .l:nth-child(2) span:last-child::after { content:' ▾'; color:var(--gold, #c9a227); }
   .arow.open .l:nth-child(2) span:last-child::after { content:' ▴'; }
   .arow:focus-visible { outline:2px solid var(--gold, #c9a227); outline-offset:2px; border-radius:8px; }
-  .hist { margin:8px 0 2px; padding:10px 12px; border-radius:12px; background:rgba(120,140,180,.12); font-size:14px; }
-  .hist .hh { font-weight:700; margin-bottom:6px; }
-  .hist .hr { display:flex; align-items:baseline; gap:8px; padding:5px 0; border-top:1px solid var(--line); }
-  .hist .hr:first-of-type { border-top:0; }
-  .hist .hr i { font-style:normal; flex:none; width:22px; height:22px; border-radius:50%; background:var(--navy2, #1b3a6b); color:#fff; font-size:12px; line-height:22px; text-align:center; }
-  .hist .hr b { flex:none; }
-  .hist .hr span { color:var(--muted); margin-left:auto; text-align:right; min-width:0; word-break:break-word; }
-  .hist .hn { margin-top:6px; color:var(--muted); word-break:break-word; }
+  .arow .hist { margin:8px 0 2px; padding:10px 12px; border-radius:12px; background:rgba(120,140,180,.12); font-size:14px; }
+  .arow .hist .hh { font-weight:700; margin-bottom:6px; }
+  .arow .hist .hr { display:flex; align-items:baseline; gap:8px; padding:5px 0; border-top:1px solid var(--line); }
+  .arow .hist .hr:first-of-type { border-top:0; }
+  .arow .hist .hr i { font-style:normal; flex:none; width:22px; height:22px; border-radius:50%; background:var(--navy2, #1b3a6b); color:#fff; font-size:12px; line-height:22px; text-align:center; }
+  .arow .hist .hr b { flex:none; }
+  .arow .hist .hr span { color:var(--muted); margin-left:auto; text-align:right; min-width:0; word-break:break-word; }
+  .arow .hist .hn { margin-top:6px; color:var(--muted); word-break:break-word; }
 
   .sortnote { margin:-2px 2px 8px; font-size:13px; color:var(--muted); }
 </style>
@@ -815,16 +815,12 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     return '<span class="duetag">' + ((d !== null && d > 0 && shownTotal(it) > 0) ? 'Due ' + esc(fmt(d)) : '') + '</span>';
   }
 
-  function histHtml(it) {
+  function histHtml(it) {                                    // entry screen: only what is still being saved / failed (no payment history)
     var h = '';
-    it.pays.forEach(function (p) {
-      h += '<div class="pay"><b>' + esc(fmt(p[0])) + '</b><span>' + esc(p[1]) + '</span></div>';
-    });
     it.pending.forEach(function (e) {
       h += '<div class="pay ' + (e.state === 'error' ? 'bad' : 'wait') + '"><b>' + esc(fmt(e.amount)) + '</b><span>' +
            (e.state === 'error' ? 'Not saved — ' + esc(e.msg || 'tap Retry') : 'Saving…') + '</span></div>';
     });
-    if (it.m) h += '<div class="rem">' + esc(it.m) + '</div>';
     return '<div class="hist">' + h + '</div>';
   }
 
@@ -1078,7 +1074,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
 
   function statusOf(x) { return x[5] <= 0 ? 'unpaid' : (x[4] > 0 && x[5] < x[4] ? 'partial' : 'paid'); }
 
-  function histHtml(x) {
+  function adminHistHtml(x) {
     var h = x[9] || [], out = '<div class="hist"><div class="hh">Payment history</div>';
     if (x[9] === undefined && x[6] > 0) out += '<div class="hn">The history is not available yet: the latest Code.gs has not been deployed. In Apps Script use Deploy \u2192 Manage deployments \u2192 Edit \u2192 New version \u2192 Deploy.</div>';
     else if (!h.length) out += '<div class="hn">No payment has been entered for this project yet.</div>';
@@ -1123,7 +1119,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
         return '<div class="arow has' + (isOpen ? ' open' : '') + '" data-k="' + x[0] + '" role="button" tabindex="0" aria-expanded="' + isOpen + '"><div class="l"><b>' + esc(x[3] || '—') + '</b><span class="st-' + st + '">' + fmt(x[5]) + ' / ' + fmt(x[4]) + '</span></div>' +
           '<div class="l"><span>' + esc(x[1]) + '</span><span>' +
           (due > 0 ? 'Due ' + fmt(due) + ' · ' : '') + (x[6] ? x[6] + (x[6] === 1 ? ' payment' : ' payments') + ' · last ' + esc(x[7]) : 'no payment') + '</span></div>' +
-          (isOpen ? histHtml(x) : '') + '</div>';
+          (isOpen ? adminHistHtml(x) : '') + '</div>';
       }).join('') + (items.length > 60 ? '<div class="empty">Showing first 60 of ' + items.length + '. Use search.</div>' : '')
         : '<div class="empty">No projects match.</div>') + '</div>';
     if (had) { var n = box.querySelector('.aq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }
