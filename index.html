@@ -312,6 +312,19 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation:none !important; transition:none !important; }
   }
+
+  .arow.has { cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .arow.has .l:nth-child(2) span:last-child::after { content:' ▾'; color:var(--gold, #c9a227); }
+  .arow.open .l:nth-child(2) span:last-child::after { content:' ▴'; }
+  .arow:focus-visible { outline:2px solid var(--gold, #c9a227); outline-offset:2px; border-radius:8px; }
+  .hist { margin:8px 0 2px; padding:10px 12px; border-radius:12px; background:rgba(120,140,180,.12); font-size:14px; }
+  .hist .hh { font-weight:700; margin-bottom:6px; }
+  .hist .hr { display:flex; align-items:baseline; gap:8px; padding:5px 0; border-top:1px solid var(--line); }
+  .hist .hr:first-of-type { border-top:0; }
+  .hist .hr i { font-style:normal; flex:none; width:22px; height:22px; border-radius:50%; background:var(--navy2, #1b3a6b); color:#fff; font-size:12px; line-height:22px; text-align:center; }
+  .hist .hr b { flex:none; }
+  .hist .hr span { color:var(--muted); margin-left:auto; text-align:right; min-width:0; word-break:break-word; }
+  .hist .hn { margin-top:6px; color:var(--muted); word-break:break-word; }
 </style>
 </head>
 <body>
@@ -637,7 +650,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
         if (!isAdminUser) $('monthStatic').innerHTML = esc(month) + '<small>Current</small>';
         showMonthChip();
         rows = r.rows.map(function (x) {
-          return { r: x.r, c: x.c, sl: x.sl, p: x.p, sc: x.sc, t: x.t, pays: x.pays, m: x.m,
+          return { r: x.r, c: x.c, p: x.p, sc: x.sc, t: x.t, pays: x.pays, m: x.m,
                    pending: [], hay: (x.c + ' ' + x.p).toLowerCase() };
         });
         byRow = {};
@@ -819,7 +832,6 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
       '<button type="button" class="head" aria-expanded="' + open + '">' +
         '<div class="info"><div class="meta">' +
           '<span class="code">' + esc(it.c || '—') + '</span>' +
-          '<span>SL ' + esc(it.sl) + '</span>' +
           '<span>Charge <b>' + esc(fmt(it.sc)) + '</b></span>' +
           dueHtml(it) +
         '</div><div class="pname">' + esc(it.p) + '</div></div>' +
@@ -971,7 +983,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
   }
 
   /* ═════════════ ADMIN DASHBOARD ═════════════ */
-  var adminOpen = false, adm = null, admScope = 'all', admRows = null, admFilter = 'all', admQ = '';
+  var adminOpen = false, adm = null, admScope = 'all', admRows = null, admFilter = 'all', admQ = '', admOpenRow = null;
 
   function setAdminView(on) {
     adminOpen = on;
@@ -1064,6 +1076,16 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
 
   function statusOf(x) { return x[5] <= 0 ? 'unpaid' : (x[4] > 0 && x[5] < x[4] ? 'partial' : 'paid'); }
 
+  function histHtml(x) {
+    var h = x[9] || [], out = '<div class="hist"><div class="hh">Payment history</div>';
+    if (!h.length) out += '<div class="hn">No payment has been entered for this project yet.</div>';
+    else h.forEach(function (p, i) {
+      out += '<div class="hr"><i>' + (i + 1) + '</i><b>' + fmt(p[0]) + '</b><span>' + esc(p[1]) + (p[2] ? ' · ' + esc(p[2]) : '') + '</span></div>';
+    });
+    if (x[8]) out += '<div class="hn">Remarks: ' + esc(x[8]) + '</div>';
+    return out + '</div>';
+  }
+
   function renderProj() {
     var box = $('admProj'); if (!box || !admRows) return;
     var q = admQ.toLowerCase(), toks = q.split(/\s+/).filter(Boolean);
@@ -1079,10 +1101,11 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     box.innerHTML = '<input class="aq" type="search" placeholder="Search project or code" value="' + esc(admQ) + '" autocomplete="off">' +
       '<div class="filters">' + chips + '</div><div class="panel">' +
       (items.length ? items.slice(0, 60).map(function (x) {
-        var st = statusOf(x), due = Math.max(0, r2(x[4] - x[5]));
-        return '<div class="arow"><div class="l"><b>' + esc(x[3] || '—') + '</b><span class="st-' + st + '">' + fmt(x[5]) + ' / ' + fmt(x[4]) + '</span></div>' +
-          '<div class="l"><span>' + esc(x[1]) + ' · SL ' + esc(x[2]) + '</span><span>' +
-          (due > 0 ? 'Due ' + fmt(due) + ' · ' : '') + (x[6] ? x[6] + (x[6] === 1 ? ' payment' : ' payments') + ' · last ' + esc(x[7]) : 'no payment') + '</span></div></div>';
+        var st = statusOf(x), due = Math.max(0, r2(x[4] - x[5])), isOpen = admOpenRow === x[0];
+        return '<div class="arow has' + (isOpen ? ' open' : '') + '" data-k="' + x[0] + '" role="button" tabindex="0" aria-expanded="' + isOpen + '"><div class="l"><b>' + esc(x[3] || '—') + '</b><span class="st-' + st + '">' + fmt(x[5]) + ' / ' + fmt(x[4]) + '</span></div>' +
+          '<div class="l"><span>' + esc(x[1]) + '</span><span>' +
+          (due > 0 ? 'Due ' + fmt(due) + ' · ' : '') + (x[6] ? x[6] + (x[6] === 1 ? ' payment' : ' payments') + ' · last ' + esc(x[7]) : 'no payment') + '</span></div>' +
+          (isOpen ? histHtml(x) : '') + '</div>';
       }).join('') + (items.length > 60 ? '<div class="empty">Showing first 60 of ' + items.length + '. Use search.</div>' : '')
         : '<div class="empty">No projects match.</div>') + '</div>';
     if (had) { var n = box.querySelector('.aq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }
@@ -1090,13 +1113,18 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
 
   $('admBody').addEventListener('change', function (e) {
     if (e.target.id !== 'admScope') return;
-    admScope = e.target.value; admRows = null; admFilter = 'all'; admQ = '';
+    admScope = e.target.value; admRows = null; admFilter = 'all'; admQ = ''; admOpenRow = null;
     renderAdmin();
     if (admScope !== 'all') loadAdminRows();
   });
   $('admBody').addEventListener('click', function (e) {
     var b = e.target.closest('[data-f]');
-    if (b) { admFilter = b.getAttribute('data-f'); renderProj(); }
+    if (b) { admFilter = b.getAttribute('data-f'); renderProj(); return; }
+    var a = e.target.closest('.arow[data-k]');
+    if (a) { var k = Number(a.getAttribute('data-k')); admOpenRow = (admOpenRow === k) ? null : k; renderProj(); }
+  });
+  $('admBody').addEventListener('keydown', function (e) {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('arow')) { e.preventDefault(); e.target.click(); }
   });
   $('admBody').addEventListener('input', function (e) {
     if (e.target.classList.contains('aq')) { admQ = e.target.value; renderProj(); }
