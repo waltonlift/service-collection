@@ -325,6 +325,8 @@
   .hist .hr b { flex:none; }
   .hist .hr span { color:var(--muted); margin-left:auto; text-align:right; min-width:0; word-break:break-word; }
   .hist .hn { margin-top:6px; color:var(--muted); word-break:break-word; }
+
+  .sortnote { margin:-2px 2px 8px; font-size:13px; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -1078,12 +1080,26 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
 
   function histHtml(x) {
     var h = x[9] || [], out = '<div class="hist"><div class="hh">Payment history</div>';
-    if (!h.length) out += '<div class="hn">No payment has been entered for this project yet.</div>';
+    if (x[9] === undefined && x[6] > 0) out += '<div class="hn">The history is not available yet: the latest Code.gs has not been deployed. In Apps Script use Deploy \u2192 Manage deployments \u2192 Edit \u2192 New version \u2192 Deploy.</div>';
+    else if (!h.length) out += '<div class="hn">No payment has been entered for this project yet.</div>';
     else h.forEach(function (p, i) {
       out += '<div class="hr"><i>' + (i + 1) + '</i><b>' + fmt(p[0]) + '</b><span>' + esc(p[1]) + (p[2] ? ' · ' + esc(p[2]) : '') + '</span></div>';
     });
     if (x[8]) out += '<div class="hn">Remarks: ' + esc(x[8]) + '</div>';
     return out + '</div>';
+  }
+
+  var MON_ = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+  function stamp_(s) {                                       // "02-Nov-2026 11:47 AM" -> sortable number (0 = unknown)
+    var m = /^(\d{1,2})-([A-Za-z]{3})[a-z]*-(\d{4})\s+(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/.exec(String(s || '').trim());
+    if (!m || MON_[m[2].toLowerCase()] === undefined) return 0;
+    var h = Number(m[4]) % 12; if (m[6] && /p/i.test(m[6])) h += 12; else if (!m[6]) h = Number(m[4]);
+    return Date.UTC(Number(m[3]), MON_[m[2].toLowerCase()], Number(m[1]), h, Number(m[5]));
+  }
+  function lastPay_(x) {                                     // time of the newest payment of a project
+    var h = x[9] || [], best = 0;
+    h.forEach(function (p) { var t = stamp_(p[2]); if (t >= best) best = t; });
+    return best;
   }
 
   function renderProj() {
@@ -1094,12 +1110,14 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
       var hay = (x[1] + ' ' + x[3]).toLowerCase();
       return toks.every(function (t) { return hay.indexOf(t) > -1; });
     });
+    var byNew = admFilter === 'paid' || admFilter === 'partial';
+    if (byNew) items.sort(function (a, b) { return (lastPay_(b) - lastPay_(a)) || (b[0] - a[0]); });     // newest payment first
     var chips = ['all', 'unpaid', 'partial', 'paid'].map(function (f) {
       return '<button type="button" class="chip' + (f === admFilter ? ' on' : '') + '" data-f="' + f + '">' + f.charAt(0).toUpperCase() + f.slice(1) + '</button>';
     }).join('');
     var keep = box.querySelector('.aq'), had = keep && document.activeElement === keep;
     box.innerHTML = '<input class="aq" type="search" placeholder="Search project or code" value="' + esc(admQ) + '" autocomplete="off">' +
-      '<div class="filters">' + chips + '</div><div class="panel">' +
+      '<div class="filters">' + chips + '</div>' + (byNew ? '<div class="sortnote">Newest payment first</div>' : '') + '<div class="panel">' +
       (items.length ? items.slice(0, 60).map(function (x) {
         var st = statusOf(x), due = Math.max(0, r2(x[4] - x[5])), isOpen = admOpenRow === x[0];
         return '<div class="arow has' + (isOpen ? ' open' : '') + '" data-k="' + x[0] + '" role="button" tabindex="0" aria-expanded="' + isOpen + '"><div class="l"><b>' + esc(x[3] || '—') + '</b><span class="st-' + st + '">' + fmt(x[5]) + ' / ' + fmt(x[4]) + '</span></div>' +
