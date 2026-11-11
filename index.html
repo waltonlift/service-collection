@@ -319,8 +319,10 @@
   .arow:focus-visible { outline:2px solid var(--gold, #c9a227); outline-offset:2px; border-radius:8px; }
   .arow .hist { margin:8px 0 2px; padding:10px 12px; border-radius:12px; background:rgba(120,140,180,.12); font-size:14px; }
   .arow .hist .hh { font-weight:700; margin-bottom:6px; }
-  .arow .hist .hr { display:flex; align-items:baseline; gap:8px; padding:5px 0; border-top:1px solid var(--line); }
-  .arow .hist .hr:first-of-type { border-top:0; }
+  .arow .hist .hp { padding:5px 0; border-top:1px solid var(--line); }
+  .arow .hist .hp:first-of-type { border-top:0; }
+  .arow .hist .hr { display:flex; align-items:baseline; gap:8px; }
+  .arow .hist .hrm { margin:3px 0 1px 30px; color:var(--ink, inherit); font-size:14px; word-break:break-word; }
   .arow .hist .hr i { font-style:normal; flex:none; width:22px; height:22px; border-radius:50%; background:var(--navy2, #1b3a6b); color:#fff; font-size:12px; line-height:22px; text-align:center; }
   .arow .hist .hr b { flex:none; }
   .arow .hist .hr span { color:var(--muted); margin-left:auto; text-align:right; min-width:0; word-break:break-word; }
@@ -1189,9 +1191,11 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
   function projAoa_(list) {
     var a = [['Month', 'Code', 'Project', 'Service charge', 'Collected', 'Still due', 'Status', 'Payments', 'Last paid by', 'Last payment time', 'Remarks']];
     list.forEach(function (e) {
-      var x = e.x, h = x[9] || [], last = h.length ? h[h.length - 1] : null;
+      var x = e.x, h = x[9] || [], last = h.length ? h[h.length - 1] : null, rm = [];
+      if (x[8]) rm.push(x[8]);                                // old-style Remarks column of older sheets
+      h.forEach(function (p) { if (p[3]) rm.push(p[1] + ': ' + p[3]); });
       a.push([e.m, x[1], x[3], num_(x[4]), num_(x[5]), num_(Math.max(0, r2(x[4] - x[5]))), statusText_(x), num_(x[6]),
-              x[7] || '', last ? when_(last[2]) : '', x[8] || '']);
+              x[7] || '', last ? when_(last[2]) : '', rm.join(' | ')]);
     });
     return a;
   }
@@ -1200,13 +1204,13 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     list.forEach(function (e) {
       (e.x[9] || []).forEach(function (p, i) {
         if (only !== undefined && p[1] !== only) return;
-        rows.push({ ts: stamp_(p[2]), a: only === undefined ? [e.m, e.x[1], e.x[3], num_(i + 1), num_(p[0]), p[1], when_(p[2])]
-                                                         : [e.m, e.x[1], e.x[3], num_(i + 1), num_(p[0]), when_(p[2])] });
+        rows.push({ ts: stamp_(p[2]), a: only === undefined ? [e.m, e.x[1], e.x[3], num_(i + 1), num_(p[0]), p[1], when_(p[2]), p[3] || '']
+                                                         : [e.m, e.x[1], e.x[3], num_(i + 1), num_(p[0]), when_(p[2]), p[3] || ''] });
       });
     });
     rows.sort(function (a, b) { return b.ts - a.ts; });
-    var head = only === undefined ? ['Month', 'Code', 'Project', 'Payment no.', 'Amount', 'Collected by', 'Date & time']
-                                  : ['Month', 'Code', 'Project', 'Payment no.', 'Amount', 'Date & time'];
+    var head = only === undefined ? ['Month', 'Code', 'Project', 'Payment no.', 'Amount', 'Collected by', 'Date & time', 'Remarks']
+                                  : ['Month', 'Code', 'Project', 'Payment no.', 'Amount', 'Date & time', 'Remarks'];
     return [head].concat(rows.map(function (r) { return r.a; }));
   }
   function listOf_(months, data) {
@@ -1253,8 +1257,8 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     var list = listOf_(months, data);
     return { sheets: [
       { name: 'Summary',  aoa: sum,               w: [30, 18, 14, 14, 16, 12, 12, 12, 12], f: false },
-      { name: 'Projects', aoa: projAoa_(list),    w: [16, 10, 38, 15, 12, 12, 13, 10, 18, 22, 34], f: true },
-      { name: 'Payments', aoa: paysAoa_(list),    w: [16, 10, 38, 12, 12, 18, 22], f: true } ],
+      { name: 'Projects', aoa: projAoa_(list),    w: [16, 10, 38, 15, 12, 12, 13, 10, 18, 22, 50], f: true },
+      { name: 'Payments', aoa: paysAoa_(list),    w: [16, 10, 38, 12, 12, 18, 22, 50], f: true } ],
       csv: projAoa_(list), file: (multi ? 'All-months' : tag_(scope)) + '_' + now.file };
   }
 
@@ -1284,7 +1288,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     var pays = paysAoa_(list, who);
     return { sheets: [
       { name: 'Summary',  aoa: sum,  w: [26, 18, 14], f: false },
-      { name: 'Payments', aoa: pays, w: [16, 10, 38, 12, 12, 22], f: true } ],
+      { name: 'Payments', aoa: pays, w: [16, 10, 38, 12, 12, 22, 50], f: true } ],
       csv: pays, file: tag_(who) + '_' + (multi ? 'All-months' : tag_(scope)) + '_' + now.file };
   }
 
@@ -1306,8 +1310,8 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     if (filter === 'paid' || filter === 'partial') sum.push([], ['Order', 'Newest payment first']);
     return { sheets: [
       { name: 'Summary',  aoa: sum,            w: [26, 30], f: false },
-      { name: 'Projects', aoa: projAoa_(list), w: [16, 10, 38, 15, 12, 12, 13, 10, 18, 22, 34], f: true },
-      { name: 'Payments', aoa: paysAoa_(list), w: [16, 10, 38, 12, 12, 18, 22], f: true } ],
+      { name: 'Projects', aoa: projAoa_(list), w: [16, 10, 38, 15, 12, 12, 13, 10, 18, 22, 50], f: true },
+      { name: 'Payments', aoa: paysAoa_(list), w: [16, 10, 38, 12, 12, 18, 22, 50], f: true } ],
       csv: projAoa_(list), file: tag_(scope) + '_' + FILTER_TAG_[filter] + (q ? '_search' : '') + '_' + now.file };
   }
 
@@ -1386,12 +1390,13 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
 
   function adminHistHtml(x) {
     var h = x[9] || [], out = '<div class="hist"><div class="hh">Payment history</div>';
-    if (x[9] === undefined && x[6] > 0) out += '<div class="hn">The history is not available yet: the latest Code.gs has not been deployed. In Apps Script use Deploy \u2192 Manage deployments \u2192 Edit \u2192 New version \u2192 Deploy.</div>';
+    if (x[9] === undefined && x[6] > 0) out += '<div class="hn">The history is not available yet: the latest Code.gs has not been deployed. In Apps Script use Deploy → Manage deployments → Edit → New version → Deploy.</div>';
     else if (!h.length) out += '<div class="hn">No payment has been entered for this project yet.</div>';
     else h.forEach(function (p, i) {
-      out += '<div class="hr"><i>' + (i + 1) + '</i><b>' + fmt(p[0]) + '</b><span>' + esc(p[1]) + (p[2] ? ' · ' + esc(p[2]) : '') + '</span></div>';
+      out += '<div class="hp"><div class="hr"><i>' + (i + 1) + '</i><b>' + fmt(p[0]) + '</b><span>' + esc(p[1]) + (p[2] ? ' · ' + esc(p[2]) : '') + '</span></div>' +
+             (p[3] ? '<div class="hrm">' + esc(p[3]) + '</div>' : '') + '</div>';
     });
-    if (x[8]) out += '<div class="hn">Remarks: ' + esc(x[8]) + '</div>';
+    if (x[8]) out += '<div class="hn">Earlier remarks: ' + esc(x[8]) + '</div>';
     return out + '</div>';
   }
 
