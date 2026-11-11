@@ -327,6 +327,11 @@
   .arow .hist .hn { margin-top:6px; color:var(--muted); word-break:break-word; }
 
   .sortnote { margin:-2px 2px 8px; font-size:13px; color:var(--muted); }
+
+  .admtop { display:flex; gap:10px; align-items:flex-end; }
+  .admtop select { flex:1; min-width:0; }
+  .admtop .iconbtn { margin-bottom:4px; background:var(--navy2); color:#fff; border-color:var(--navy2); }
+  .admtop .iconbtn.busy { opacity:.7; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -981,7 +986,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
   }
 
   /* ═════════════ ADMIN DASHBOARD ═════════════ */
-  var adminOpen = false, adm = null, admScope = 'all', admRows = null, admFilter = 'all', admQ = '', admOpenRow = null;
+  var adminOpen = false, adm = null, admScope = 'all', admRows = null, admFilter = 'all', admQ = '', admOpenRow = null, admCache = {};
 
   function setAdminView(on) {
     adminOpen = on;
@@ -1000,7 +1005,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
         busyReload(false);
         if (r.expired) { expired(); return; }
         if (!r.success) { $('admBody').innerHTML = '<div class="empty">' + esc(r.message) + '</div>'; return; }
-        adm = r.months;
+        adm = r.months; admCache = {};
         if (admScope !== 'all' && !adm.some(function (m) { return m.name === admScope; })) admScope = 'all';
         admRows = null; renderAdmin();
         if (admScope !== 'all') loadAdminRows();
@@ -1016,7 +1021,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
         if (r.expired) { expired(); return; }
         if (scope !== admScope) return;
         if (!r.success) { $('admProj').innerHTML = '<div class="empty">' + esc(r.message) + '</div>'; return; }
-        admRows = r.rows; renderProj();
+        admRows = r.rows; admCache[scope] = r.rows; renderProj();
       })
       .withFailureHandler(function () { $('admProj').innerHTML = '<div class="empty">Connection error.</div>'; })
       .getAdminMonth(token, scope);
@@ -1035,11 +1040,13 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
         c.amt += m.cse[n].amt; c.n += m.cse[n].n;
       });
     });
-    var h = '<select id="admScope" aria-label="Month"><option value="all">All months</option>' +
+    var h = '<div class="admtop"><select id="admScope" aria-label="Month"><option value="all">All months</option>' +
       adm.map(function (m) {
         return '<option value="' + esc(m.name) + '"' + (m.name === admScope ? ' selected' : '') + '>' +
                esc(m.name) + (m.locked ? ' 🔒' : '') + '</option>';
-      }).join('') + '</select>';
+      }).join('') + '</select>' +
+      '<button type="button" class="iconbtn" id="admDl" title="Download the report as an Excel file" aria-label="Download report">' +
+      '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>Report</button></div>';
     var pc = pct(T.collected, T.expected);
     h += '<div class="hero"><div class="ring" style="--p:' + Math.min(100, pc) + '"><b>' + pc + '%</b></div>' +
          '<div><small>Collected</small><strong>' + fmt(r2(T.collected)) + '</strong><span>of ' + fmt(r2(T.expected)) + ' expected</span></div></div>';
@@ -1068,6 +1075,140 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     else h += '<div class="sec">Projects in ' + esc(admScope) + '</div><div id="admProj"><div class="empty">Loading projects…</div></div>';
     $('admBody').innerHTML = h;
     if (admRows && admScope !== 'all') renderProj();
+  }
+
+
+  /* ═════════════ REPORT DOWNLOAD (Excel) ═════════════ */
+  var XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  function loadXlsx(cb) {
+    if (window.XLSX) { cb(true); return; }
+    var s = document.createElement('script'); s.src = XLSX_URL; s.async = true;
+    s.onload = function () { cb(!!window.XLSX); };
+    s.onerror = function () { cb(false); };
+    document.head.appendChild(s);
+  }
+  function dhakaNow_() {
+    var p = {}; new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Dhaka', year: 'numeric', month: 'short', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: true }).formatToParts(new Date()).forEach(function (x) { p[x.type] = x.value; });
+    var mm = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+    return { file: p.year + '-' + mm[String(p.month).slice(0, 3).toLowerCase()] + '-' + p.day,
+             text: p.day + '-' + String(p.month).slice(0, 3) + '-' + p.year + ' ' + p.hour + ':' + p.minute + ' ' + String(p.dayPeriod || '').toUpperCase() };
+  }
+  function statusText_(x) { return x[5] <= 0 ? 'No payment' : (x[4] > 0 && x[5] < x[4] ? 'Partly paid' : 'Paid'); }
+  function num_(v) { v = Number(v) || 0; return { t: 'n', v: v, z: (v % 1 === 0) ? '#,##0' : '#,##0.00' }; }
+  function when_(s) {                                         // "02-Nov-2026 11:47 AM" -> real Excel date-time (sortable)
+    var ms = stamp_(s);
+    return ms ? { t: 'n', v: ms / 86400000 + 25569, z: 'dd-mmm-yyyy hh:mm AM/PM', _txt: String(s) } : String(s || '');
+  }
+
+  function buildReport_(months, data, scope) {
+    var now = dhakaNow_(), multi = months.length > 1;
+    var T = { projects: 0, expected: 0, collected: 0, due: 0, full: 0, partial: 0, unpaid: 0, pays: 0 }, cse = {};
+    months.forEach(function (m) {
+      Object.keys(T).forEach(function (k) { T[k] += m[k]; });
+      Object.keys(m.cse).forEach(function (n) { var c = cse[n] = cse[n] || { amt: 0, n: 0 }; c.amt += m.cse[n].amt; c.n += m.cse[n].n; });
+    });
+    var sum = [
+      ['After Sales Service Bill Collection — Report'],
+      ['Period', multi ? 'All months' : scope],
+      ['Generated', now.text + ' (Bangladesh time)'],
+      [],
+      ['Expected (service charge)', num_(r2(T.expected))],
+      ['Collected', num_(r2(T.collected))],
+      ['Still due', num_(r2(T.due))],
+      ['Collected %', { t: 'n', v: T.expected > 0 ? T.collected / T.expected : 0, z: '0.0%' }],
+      ['Projects', num_(T.projects)],
+      ['Fully paid', num_(T.full)],
+      ['Partly paid', num_(T.partial)],
+      ['No payment', num_(T.unpaid)],
+      ['Payments entered', num_(T.pays)]
+    ];
+    if (multi) {
+      sum.push([], ['Month by month'], ['Month', 'Expected', 'Collected', 'Still due', 'Collected %', 'Projects', 'Fully paid', 'Partly paid', 'No payment']);
+      months.forEach(function (m) {
+        sum.push([m.name, num_(m.expected), num_(m.collected), num_(m.due),
+          { t: 'n', v: m.expected > 0 ? m.collected / m.expected : 0, z: '0.0%' }, num_(m.projects), num_(m.full), num_(m.partial), num_(m.unpaid)]);
+      });
+    }
+    var names = Object.keys(cse).sort(function (a, b) { return cse[b].amt - cse[a].amt; });
+    sum.push([], ['Collection by CSE'], ['CSE', 'Amount', 'Payments', 'Share of collected']);
+    names.forEach(function (n) {
+      sum.push([n, num_(r2(cse[n].amt)), num_(cse[n].n), { t: 'n', v: T.collected > 0 ? cse[n].amt / T.collected : 0, z: '0.0%' }]);
+    });
+    if (!names.length) sum.push(['No payments yet.']);
+
+    var proj = [['Month', 'Code', 'Project', 'Service charge', 'Collected', 'Still due', 'Status', 'Payments', 'Last paid by', 'Last payment time', 'Remarks']];
+    var pays = [], payRows = [];
+    months.forEach(function (m) {
+      (data[m.name] || []).forEach(function (x) {
+        var h = x[9] || [], last = h.length ? h[h.length - 1] : null;
+        proj.push([m.name, x[1], x[3], num_(x[4]), num_(x[5]), num_(Math.max(0, r2(x[4] - x[5]))), statusText_(x), num_(x[6]),
+                   x[7] || '', last ? when_(last[2]) : '', x[8] || '']);
+        h.forEach(function (p, i) { payRows.push({ ts: stamp_(p[2]), a: [m.name, x[1], x[3], num_(i + 1), num_(p[0]), p[1], when_(p[2])] }); });
+      });
+    });
+    payRows.sort(function (a, b) { return b.ts - a.ts; });
+    pays = [['Month', 'Code', 'Project', 'Payment no.', 'Amount', 'Collected by', 'Date & time']].concat(payRows.map(function (r) { return r.a; }));
+    return { sum: sum, proj: proj, pays: pays, now: now, multi: multi };
+  }
+
+  function sheet_(aoa, widths, filter) {
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = widths.map(function (w) { return { wch: w }; });
+    if (filter && aoa.length > 1) ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: aoa[0].length - 1 } }) };
+    return ws;
+  }
+  function csvDownload_(R, name) {                            // fallback when the Excel library cannot be loaded
+    var rows = R.proj.map(function (r) {
+      return r.map(function (c) {
+        var v = (c && typeof c === 'object') ? (c._txt !== undefined ? c._txt : c.v) : c;
+        v = String(v === undefined || v === null ? '' : v);
+        return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+      }).join(',');
+    }).join('\r\n');
+    var blob = new Blob(['﻿' + rows], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name.replace(/\.xlsx$/, '.csv');
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }
+
+  function downloadReport() {
+    var btn = $('admDl'); if (!btn || btn.classList.contains('busy') || !adm) return;
+    var scope = admScope;
+    var months = (scope === 'all' ? adm : adm.filter(function (m) { return m.name === scope; })).filter(function (m) { return !m.error; });
+    if (!months.length) { toast('Nothing to report yet.'); return; }
+    btn.classList.add('busy'); toast('Preparing the report…');
+    function done() { var b = $('admDl'); if (b) b.classList.remove('busy'); }
+    function fail(msg) { done(); toast(msg || 'Could not prepare the report. Please try again.'); }
+    var data = {}, i = 0;
+    (function next() {
+      if (i >= months.length) { finish(); return; }
+      var m = months[i++];
+      if (admCache[m.name]) { data[m.name] = admCache[m.name]; next(); return; }
+      google.script.run
+        .withSuccessHandler(function (r) {
+          if (r.expired) { done(); expired(); return; }
+          if (!r.success) { fail(r.message); return; }
+          admCache[m.name] = r.rows; data[m.name] = r.rows; next();
+        })
+        .withFailureHandler(function () { fail('Connection error. Please try again.'); })
+        .getAdminMonth(token, m.name);
+    })();
+    function finish() {
+      var R = buildReport_(months, data, scope);
+      var name = 'Service-Collection-Report_' + (R.multi ? 'All-months' : scope.replace(/\s+/g, '-')) + '_' + R.now.file + '.xlsx';
+      loadXlsx(function (ok) {
+        try {
+          if (!ok) { csvDownload_(R, name); done(); toast('✓ Report downloaded (CSV)'); return; }
+          var wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, sheet_(R.sum, [30, 18, 14, 14, 16, 12, 12, 12, 12], false), 'Summary');
+          XLSX.utils.book_append_sheet(wb, sheet_(R.proj, [16, 10, 38, 15, 12, 12, 13, 10, 18, 22, 34], true), 'Projects');
+          XLSX.utils.book_append_sheet(wb, sheet_(R.pays, [16, 10, 38, 12, 12, 18, 22], true), 'Payments');
+          XLSX.writeFile(wb, name);
+          done(); toast('✓ Report downloaded');
+        } catch (e) { fail('Could not create the file. Please try again.'); }
+      });
+    }
   }
 
   function kpi(label, val, cls) { return '<div class="kpi ' + cls + '"><small>' + esc(label) + '</small><b>' + esc(val) + '</b></div>'; }
@@ -1132,6 +1273,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     if (admScope !== 'all') loadAdminRows();
   });
   $('admBody').addEventListener('click', function (e) {
+    if (e.target.closest('#admDl')) { downloadReport(); return; }
     var b = e.target.closest('[data-f]');
     if (b) { admFilter = b.getAttribute('data-f'); renderProj(); return; }
     var a = e.target.closest('.arow[data-k]');
