@@ -332,6 +332,15 @@
   .admtop select { flex:1; min-width:0; }
   .admtop .iconbtn { margin-bottom:4px; background:var(--navy2); color:#fff; border-color:var(--navy2); }
   .admtop .iconbtn.busy { opacity:.7; pointer-events:none; }
+
+  .filters .dlbtn { margin-left:auto; display:inline-flex; align-items:center; gap:6px; background:var(--navy2); color:#fff; border-color:var(--navy2); }
+  .filters .dlbtn svg { width:16px; height:16px; }
+  .filters .dlbtn:disabled { opacity:.45; }
+  .filters .dlbtn.busy, .dlmini.busy { opacity:.6; pointer-events:none; }
+  .cserow { display:flex; align-items:center; gap:10px; }
+  .cserow .cbody { flex:1; min-width:0; }
+  .dlmini { flex:none; width:40px; height:40px; border-radius:12px; border:1.5px solid var(--line); background:var(--card); display:inline-flex; align-items:center; justify-content:center; }
+  .dlmini svg { width:18px; height:18px; }
 </style>
 </head>
 <body>
@@ -986,7 +995,7 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
   }
 
   /* ═════════════ ADMIN DASHBOARD ═════════════ */
-  var adminOpen = false, adm = null, admScope = 'all', admRows = null, admFilter = 'all', admQ = '', admOpenRow = null, admCache = {};
+  var adminOpen = false, adm = null, admScope = 'all', admRows = null, admFilter = 'all', admQ = '', admOpenRow = null, admCache = {}, admCseNames = [];
 
   function setAdminView(on) {
     adminOpen = on;
@@ -1065,10 +1074,13 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     }
 
     var names = Object.keys(cse).sort(function (a, b) { return cse[b].amt - cse[a].amt; });
-    h += '<div class="sec">Collection by CSE</div><div class="panel">' + (names.length ? names.map(function (n) {
+    admCseNames = names;
+    h += '<div class="sec">Collection by CSE</div><div class="panel">' + (names.length ? names.map(function (n, i) {
       var c = cse[n], share = pct(c.amt, T.collected);
-      return '<div class="arow"><div class="l"><b>' + esc(n) + '</b><span>' + fmt(r2(c.amt)) + ' · ' + c.n +
-        (c.n === 1 ? ' payment' : ' payments') + ' · ' + share + '%</span></div><div class="meter"><i style="width:' + Math.min(100, share) + '%"></i></div></div>';
+      return '<div class="arow cserow"><div class="cbody"><div class="l"><b>' + esc(n) + '</b><span>' + fmt(r2(c.amt)) + ' · ' + c.n +
+        (c.n === 1 ? ' payment' : ' payments') + ' · ' + share + '%</span></div><div class="meter"><i style="width:' + Math.min(100, share) + '%"></i></div></div>' +
+        '<button type="button" class="dlmini" data-ci="' + i + '" title="Download ' + esc(n) + '\'s collection report" aria-label="Download collection report of ' + esc(n) + '">' +
+        '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg></button></div>';
     }).join('') : '<div class="empty"><span>No payments yet.</span></div>') + '</div>';
 
     if (admScope === 'all') h += '<div class="sec">Projects</div><div class="panel"><div class="empty">Pick a month above to see its projects.</div></div>';
@@ -1158,8 +1170,8 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     if (filter && aoa.length > 1) ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: aoa[0].length - 1 } }) };
     return ws;
   }
-  function csvDownload_(R, name) {                            // fallback when the Excel library cannot be loaded
-    var rows = R.proj.map(function (r) {
+  function csvDownload_(aoa, name) {                          // fallback when the Excel library cannot be loaded
+    var rows = aoa.map(function (r) {
       return r.map(function (c) {
         var v = (c && typeof c === 'object') ? (c._txt !== undefined ? c._txt : c.v) : c;
         v = String(v === undefined || v === null ? '' : v);
@@ -1171,44 +1183,201 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     document.body.appendChild(a); a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
   }
+  function tag_(s) { return String(s).trim().replace(/[\\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '') || 'report'; }
 
-  function downloadReport() {
-    var btn = $('admDl'); if (!btn || btn.classList.contains('busy') || !adm) return;
-    var scope = admScope;
-    var months = (scope === 'all' ? adm : adm.filter(function (m) { return m.name === scope; })).filter(function (m) { return !m.error; });
-    if (!months.length) { toast('Nothing to report yet.'); return; }
-    btn.classList.add('busy'); toast('Preparing the report…');
-    function done() { var b = $('admDl'); if (b) b.classList.remove('busy'); }
-    function fail(msg) { done(); toast(msg || 'Could not prepare the report. Please try again.'); }
+  /* project rows / payment rows from a list of { m: month name, x: project row } */
+  function projAoa_(list) {
+    var a = [['Month', 'Code', 'Project', 'Service charge', 'Collected', 'Still due', 'Status', 'Payments', 'Last paid by', 'Last payment time', 'Remarks']];
+    list.forEach(function (e) {
+      var x = e.x, h = x[9] || [], last = h.length ? h[h.length - 1] : null;
+      a.push([e.m, x[1], x[3], num_(x[4]), num_(x[5]), num_(Math.max(0, r2(x[4] - x[5]))), statusText_(x), num_(x[6]),
+              x[7] || '', last ? when_(last[2]) : '', x[8] || '']);
+    });
+    return a;
+  }
+  function paysAoa_(list, only) {                             // only = collector's name (optional)
+    var rows = [];
+    list.forEach(function (e) {
+      (e.x[9] || []).forEach(function (p, i) {
+        if (only !== undefined && p[1] !== only) return;
+        rows.push({ ts: stamp_(p[2]), a: only === undefined ? [e.m, e.x[1], e.x[3], num_(i + 1), num_(p[0]), p[1], when_(p[2])]
+                                                         : [e.m, e.x[1], e.x[3], num_(i + 1), num_(p[0]), when_(p[2])] });
+      });
+    });
+    rows.sort(function (a, b) { return b.ts - a.ts; });
+    var head = only === undefined ? ['Month', 'Code', 'Project', 'Payment no.', 'Amount', 'Collected by', 'Date & time']
+                                  : ['Month', 'Code', 'Project', 'Payment no.', 'Amount', 'Date & time'];
+    return [head].concat(rows.map(function (r) { return r.a; }));
+  }
+  function listOf_(months, data) {
+    var list = [];
+    months.forEach(function (m) { (data[m.name] || []).forEach(function (x) { list.push({ m: m.name, x: x }); }); });
+    return list;
+  }
+
+  function buildReport_(months, data, scope) {
+    var now = dhakaNow_(), multi = months.length > 1;
+    var T = { projects: 0, expected: 0, collected: 0, due: 0, full: 0, partial: 0, unpaid: 0, pays: 0 }, cse = {};
+    months.forEach(function (m) {
+      Object.keys(T).forEach(function (k) { T[k] += m[k]; });
+      Object.keys(m.cse).forEach(function (n) { var c = cse[n] = cse[n] || { amt: 0, n: 0 }; c.amt += m.cse[n].amt; c.n += m.cse[n].n; });
+    });
+    var sum = [
+      ['After Sales Service Bill Collection — Report'],
+      ['Period', multi ? 'All months' : scope],
+      ['Generated', now.text + ' (Bangladesh time)'],
+      [],
+      ['Expected (service charge)', num_(r2(T.expected))],
+      ['Collected', num_(r2(T.collected))],
+      ['Still due', num_(r2(T.due))],
+      ['Collected %', { t: 'n', v: T.expected > 0 ? T.collected / T.expected : 0, z: '0.0%' }],
+      ['Projects', num_(T.projects)],
+      ['Fully paid', num_(T.full)],
+      ['Partly paid', num_(T.partial)],
+      ['No payment', num_(T.unpaid)],
+      ['Payments entered', num_(T.pays)]
+    ];
+    if (multi) {
+      sum.push([], ['Month by month'], ['Month', 'Expected', 'Collected', 'Still due', 'Collected %', 'Projects', 'Fully paid', 'Partly paid', 'No payment']);
+      months.forEach(function (m) {
+        sum.push([m.name, num_(m.expected), num_(m.collected), num_(m.due),
+          { t: 'n', v: m.expected > 0 ? m.collected / m.expected : 0, z: '0.0%' }, num_(m.projects), num_(m.full), num_(m.partial), num_(m.unpaid)]);
+      });
+    }
+    var names = Object.keys(cse).sort(function (a, b) { return cse[b].amt - cse[a].amt; });
+    sum.push([], ['Collection by CSE'], ['CSE', 'Amount', 'Payments', 'Share of collected']);
+    names.forEach(function (n) {
+      sum.push([n, num_(r2(cse[n].amt)), num_(cse[n].n), { t: 'n', v: T.collected > 0 ? cse[n].amt / T.collected : 0, z: '0.0%' }]);
+    });
+    if (!names.length) sum.push(['No payments yet.']);
+    var list = listOf_(months, data);
+    return { sheets: [
+      { name: 'Summary',  aoa: sum,               w: [30, 18, 14, 14, 16, 12, 12, 12, 12], f: false },
+      { name: 'Projects', aoa: projAoa_(list),    w: [16, 10, 38, 15, 12, 12, 13, 10, 18, 22, 34], f: true },
+      { name: 'Payments', aoa: paysAoa_(list),    w: [16, 10, 38, 12, 12, 18, 22], f: true } ],
+      csv: projAoa_(list), file: (multi ? 'All-months' : tag_(scope)) + '_' + now.file };
+  }
+
+  /* One CSE: every payment he/she collected in the chosen month(s) */
+  function buildCseReport_(who, months, data, scope) {
+    var now = dhakaNow_(), multi = months.length > 1, list = listOf_(months, data), total = 0, n = 0, projects = {}, perMonth = {};
+    list.forEach(function (e) {
+      (e.x[9] || []).forEach(function (p) {
+        if (p[1] !== who) return;
+        total += p[0]; n++; projects[e.m + '|' + e.x[0]] = 1;
+        var pm = perMonth[e.m] = perMonth[e.m] || { amt: 0, n: 0 }; pm.amt += p[0]; pm.n++;
+      });
+    });
+    var sum = [
+      ['Collection report — ' + who],
+      ['Period', multi ? 'All months' : scope],
+      ['Generated', now.text + ' (Bangladesh time)'],
+      [],
+      ['Collected', num_(r2(total))],
+      ['Payments', num_(n)],
+      ['Projects', num_(Object.keys(projects).length)]
+    ];
+    if (multi) {
+      sum.push([], ['Month by month'], ['Month', 'Collected', 'Payments']);
+      months.forEach(function (m) { var pm = perMonth[m.name] || { amt: 0, n: 0 }; sum.push([m.name, num_(r2(pm.amt)), num_(pm.n)]); });
+    }
+    var pays = paysAoa_(list, who);
+    return { sheets: [
+      { name: 'Summary',  aoa: sum,  w: [26, 18, 14], f: false },
+      { name: 'Payments', aoa: pays, w: [16, 10, 38, 12, 12, 22], f: true } ],
+      csv: pays, file: tag_(who) + '_' + (multi ? 'All-months' : tag_(scope)) + '_' + now.file };
+  }
+
+  /* The projects currently listed under the chosen filter / search */
+  var FILTER_LABEL_ = { all: 'All projects', unpaid: 'No payment', partial: 'Partly paid', paid: 'Fully paid' };
+  var FILTER_TAG_ = { all: 'All-projects', unpaid: 'No-payment', partial: 'Partly-paid', paid: 'Fully-paid' };
+  function buildFilteredReport_(items, scope, filter, q) {
+    var now = dhakaNow_(), list = items.map(function (x) { return { m: scope, x: x }; }), sc = 0, col = 0, due = 0, pays = 0;
+    items.forEach(function (x) { sc += x[4]; col += x[5]; due += Math.max(0, x[4] - x[5]); pays += x[6]; });
+    var sum = [
+      ['After Sales Service Bill Collection — ' + FILTER_LABEL_[filter]],
+      ['Period', scope],
+      ['Filter', FILTER_LABEL_[filter]]
+    ];
+    if (q) sum.push(['Search', q]);
+    sum.push(['Generated', now.text + ' (Bangladesh time)'], [],
+      ['Projects in this list', num_(items.length)], ['Service charge', num_(r2(sc))], ['Collected', num_(r2(col))],
+      ['Still due', num_(r2(due))], ['Payments entered', num_(pays)]);
+    if (filter === 'paid' || filter === 'partial') sum.push([], ['Order', 'Newest payment first']);
+    return { sheets: [
+      { name: 'Summary',  aoa: sum,            w: [26, 30], f: false },
+      { name: 'Projects', aoa: projAoa_(list), w: [16, 10, 38, 15, 12, 12, 13, 10, 18, 22, 34], f: true },
+      { name: 'Payments', aoa: paysAoa_(list), w: [16, 10, 38, 12, 12, 18, 22], f: true } ],
+      csv: projAoa_(list), file: tag_(scope) + '_' + FILTER_TAG_[filter] + (q ? '_search' : '') + '_' + now.file };
+  }
+
+  /* shared plumbing */
+  var rptBusy = false;
+  function withMonthRows_(months, ok, bad) {
     var data = {}, i = 0;
     (function next() {
-      if (i >= months.length) { finish(); return; }
+      if (i >= months.length) { ok(data); return; }
       var m = months[i++];
       if (admCache[m.name]) { data[m.name] = admCache[m.name]; next(); return; }
       google.script.run
         .withSuccessHandler(function (r) {
-          if (r.expired) { done(); expired(); return; }
-          if (!r.success) { fail(r.message); return; }
+          if (r.expired) { bad(null, true); return; }
+          if (!r.success) { bad(r.message); return; }
           admCache[m.name] = r.rows; data[m.name] = r.rows; next();
         })
-        .withFailureHandler(function () { fail('Connection error. Please try again.'); })
+        .withFailureHandler(function () { bad('Connection error. Please try again.'); })
         .getAdminMonth(token, m.name);
     })();
-    function finish() {
-      var R = buildReport_(months, data, scope);
-      var name = 'Service-Collection-Report_' + (R.multi ? 'All-months' : scope.replace(/\s+/g, '-')) + '_' + R.now.file + '.xlsx';
-      loadXlsx(function (ok) {
-        try {
-          if (!ok) { csvDownload_(R, name); done(); toast('✓ Report downloaded (CSV)'); return; }
-          var wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, sheet_(R.sum, [30, 18, 14, 14, 16, 12, 12, 12, 12], false), 'Summary');
-          XLSX.utils.book_append_sheet(wb, sheet_(R.proj, [16, 10, 38, 15, 12, 12, 13, 10, 18, 22, 34], true), 'Projects');
-          XLSX.utils.book_append_sheet(wb, sheet_(R.pays, [16, 10, 38, 12, 12, 18, 22], true), 'Payments');
-          XLSX.writeFile(wb, name);
-          done(); toast('✓ Report downloaded');
-        } catch (e) { fail('Could not create the file. Please try again.'); }
+  }
+  function saveReport_(R, prefix, finishCb) {
+    var name = prefix + R.file + '.xlsx';
+    loadXlsx(function (ok) {
+      try {
+        if (!ok) { csvDownload_(R.csv, name); finishCb(true, 'CSV'); return; }
+        var wb = XLSX.utils.book_new();
+        R.sheets.forEach(function (s) { XLSX.utils.book_append_sheet(wb, sheet_(s.aoa, s.w, s.f), s.name); });
+        XLSX.writeFile(wb, name);
+        finishCb(true);
+      } catch (e) { finishCb(false); }
+    });
+  }
+  /* run one download: busyEl gets a spinner state, `make` builds the report from the month data */
+  function runReport_(months, busyEl, prefix, make) {
+    if (rptBusy) return;
+    if (!months.length) { toast('Nothing to report yet.'); return; }
+    rptBusy = true; if (busyEl) busyEl.classList.add('busy'); toast('Preparing the report…');
+    function end() { rptBusy = false; if (busyEl) busyEl.classList.remove('busy'); }
+    withMonthRows_(months, function (data) {
+      var R; try { R = make(data); } catch (e) { end(); toast('Could not prepare the report. Please try again.'); return; }
+      saveReport_(R, prefix, function (ok, kind) {
+        end(); toast(ok ? (kind === 'CSV' ? '✓ Report downloaded (CSV)' : '✓ Report downloaded') : 'Could not create the file. Please try again.');
       });
-    }
+    }, function (msg, expiredFlag) { end(); if (expiredFlag) { expired(); return; } toast(msg || 'Could not prepare the report. Please try again.'); });
+  }
+  function scopeMonths_() {
+    return (admScope === 'all' ? adm : adm.filter(function (m) { return m.name === admScope; })).filter(function (m) { return !m.error; });
+  }
+
+  function downloadReport() {                                 // the whole month (or all months)
+    if (!adm) return;
+    var months = scopeMonths_(), scope = admScope;
+    runReport_(months, $('admDl'), 'Service-Collection-Report_', function (data) { return buildReport_(months, data, scope); });
+  }
+  function downloadCse(i) {                                   // one CSE
+    var who = admCseNames[i]; if (!adm || who === undefined) return;
+    var months = scopeMonths_(), scope = admScope, btn = document.querySelector('[data-ci="' + i + '"]');
+    runReport_(months, btn, 'Collection-Report_', function (data) { return buildCseReport_(who, months, data, scope); });
+  }
+  function downloadFiltered() {                               // exactly what the filter + search currently list
+    if (!adm || !admRows || admScope === 'all') return;
+    var items = projItems_(), scope = admScope, f = admFilter, q = admQ.trim();
+    if (!items.length) { toast('No projects in this list.'); return; }
+    if (rptBusy) return;
+    rptBusy = true; var btn = $('admDlF'); if (btn) btn.classList.add('busy'); toast('Preparing the report…');
+    saveReport_(buildFilteredReport_(items, scope, f, q), 'Service-Collection_', function (ok, kind) {
+      rptBusy = false; var b = $('admDlF'); if (b) b.classList.remove('busy');
+      toast(ok ? (kind === 'CSV' ? '✓ Report downloaded (CSV)' : '✓ Report downloaded') : 'Could not create the file. Please try again.');
+    });
   }
 
   function kpi(label, val, cls) { return '<div class="kpi ' + cls + '"><small>' + esc(label) + '</small><b>' + esc(val) + '</b></div>'; }
@@ -1239,19 +1408,26 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
     return best;
   }
 
-  function renderProj() {
-    var box = $('admProj'); if (!box || !admRows) return;
-    var q = admQ.toLowerCase(), toks = q.split(/\s+/).filter(Boolean);
-    var items = admRows.filter(function (x) {
+  function projItems_() {                                     // the projects the current filter + search list, in display order
+    var toks = admQ.toLowerCase().split(/\s+/).filter(Boolean);
+    var items = (admRows || []).filter(function (x) {
       if (admFilter !== 'all' && statusOf(x) !== admFilter) return false;
       var hay = (x[1] + ' ' + x[3]).toLowerCase();
       return toks.every(function (t) { return hay.indexOf(t) > -1; });
     });
+    if (admFilter === 'paid' || admFilter === 'partial') items.sort(function (a, b) { return (lastPay_(b) - lastPay_(a)) || (b[0] - a[0]); });   // newest payment first
+    return items;
+  }
+
+  function renderProj() {
+    var box = $('admProj'); if (!box || !admRows) return;
+    var items = projItems_();
     var byNew = admFilter === 'paid' || admFilter === 'partial';
-    if (byNew) items.sort(function (a, b) { return (lastPay_(b) - lastPay_(a)) || (b[0] - a[0]); });     // newest payment first
     var chips = ['all', 'unpaid', 'partial', 'paid'].map(function (f) {
       return '<button type="button" class="chip' + (f === admFilter ? ' on' : '') + '" data-f="' + f + '">' + f.charAt(0).toUpperCase() + f.slice(1) + '</button>';
-    }).join('');
+    }).join('') + '<button type="button" class="chip dlbtn" id="admDlF"' + (items.length ? '' : ' disabled') +
+      ' title="Download exactly this list as an Excel file" aria-label="Download this list">' +
+      '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>Download</button>';
     var keep = box.querySelector('.aq'), had = keep && document.activeElement === keep;
     box.innerHTML = '<input class="aq" type="search" placeholder="Search project or code" value="' + esc(admQ) + '" autocomplete="off">' +
       '<div class="filters">' + chips + '</div>' + (byNew ? '<div class="sortnote">Newest payment first</div>' : '') + '<div class="panel">' +
@@ -1274,6 +1450,8 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbyPTjxjud8LGqXvJ1GF7KjI8k
   });
   $('admBody').addEventListener('click', function (e) {
     if (e.target.closest('#admDl')) { downloadReport(); return; }
+    if (e.target.closest('#admDlF')) { downloadFiltered(); return; }
+    var dc = e.target.closest('[data-ci]'); if (dc) { downloadCse(Number(dc.getAttribute('data-ci'))); return; }
     var b = e.target.closest('[data-f]');
     if (b) { admFilter = b.getAttribute('data-f'); renderProj(); return; }
     var a = e.target.closest('.arow[data-k]');
